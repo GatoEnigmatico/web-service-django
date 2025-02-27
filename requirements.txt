@@ -1,0 +1,10 @@
+django
+python-dotenv
+djangorestframework
+drf-yasg
+langchain
+langchain-community
+openai
+faiss-cpu
+chromadb
+tiktoken
