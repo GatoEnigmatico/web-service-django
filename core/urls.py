@@ -17,7 +17,32 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
+from drf_yasg.views import get_schema_view
+from rest_framework import permissions
+from drf_yasg import openapi
+
+# Configuración del esquema de Swagger
+schema_view = get_schema_view(
+    openapi.Info(
+        title="API de mi Proyecto",
+        default_version="v1",
+        description="Documentación de la API con Swagger",
+        terms_of_service="https://www.tusitio.com/terms/",
+        contact=openapi.Contact(email="soporte@tusitio.com"),
+        license=openapi.License(name="Licencia BSD"),
+    ),
+    public=True,
+    permission_classes=(permissions.AllowAny,),
+)
+
+
 urlpatterns = [
+    # Documentación Swagger en la ruta principal "/"
+    path("", schema_view.with_ui("swagger", cache_timeout=0), name="schema-swagger-ui"),
+
+    # También puedes agregar la versión en Redoc (opcional)
+    path("redoc/", schema_view.with_ui("redoc", cache_timeout=0), name="schema-redoc"),
+    
     path('api/', include('rag_app.urls')),
     path('admin/', admin.site.urls),
 ]

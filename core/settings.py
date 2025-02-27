@@ -151,7 +151,7 @@ LOGGING = {
         'file': {
             'level': 'ERROR',
             'class': 'logging.FileHandler',
-            'filename': '/opt/bitnami/projects/web-service-django/logs/django.log',
+            'filename': BASE_DIR / 'logs' / 'django.log',  # Ruta relativa
         },
     },
     'loggers': {
