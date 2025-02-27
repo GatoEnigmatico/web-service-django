@@ -7,6 +7,10 @@ from langchain.vectorstores import FAISS
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Log current working directory
+current_directory = os.getcwd()
+logging.info("Current working directory: %s", current_directory)
+
 INDEX_PATH = "faiss_index"
 embeddings = OpenAIEmbeddings()
 db_lock = threading.Lock()
