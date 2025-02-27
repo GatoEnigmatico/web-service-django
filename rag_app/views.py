@@ -104,47 +104,69 @@ class ChatView(APIView):
     API endpoint for handling chat interactions.
     """
     def post(self, request):
-        session_id = request.data.get("session_id", None)
+        session_id = request.data.get("session_id")
         query = request.data.get("query", "")
 
         if not query:
-            return Response({"error": "You must provide a question"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "You must provide a question."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create or retrieve the chat session.
+        # Create or retrieve the chat session
         session, _ = ChatSession.objects.get_or_create(session_id=session_id)
 
-        # Retrieve chat history.
+        # Retrieve chat history
         previous_messages = ChatMessage.objects.filter(session=session).order_by("timestamp")
-        history = "\n".join([f"{msg.role}: {msg.content}" for msg in previous_messages])
+        history = [{"role": msg.role, "content": msg.content} for msg in previous_messages]
 
-        # 🔍 Search for relevant documents using FAISS (RAG).
+        # 🔍 Search for relevant documents using FAISS (RAG)
         retrieved_docs = search(query)
         if retrieved_docs:
-            context = "\n\n".join([f"- {doc['content']}" for doc in retrieved_docs])
+            context_docs = "\n\n".join([f"- {doc['content']}" for doc in retrieved_docs])
         else:
-            context = "No relevant documents found."
+            context_docs = "No relevant documents found."
 
-        # Log the retrieved documents for debugging.
-        logger.debug(f"Retrieved documents: {context}")
+        # Log retrieved documents for debugging
+        logger.debug(f"Retrieved documents: {context_docs}")
 
-        # 🔥 Generate response using OpenAI.
-        llm = OpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"))
-        prompt = f"""
-You are an intelligent assistant that answers questions using relevant information.
+        # Build the messages list for OpenAI's ChatCompletion API.
+        # Note: the prompt sent to ChatGPT remains in Spanish.
+        messages = [
+            # {
+            #     "role": "system",
+            #     "content": (
+            #         "Eres un asistente inteligente que responde preguntas utilizando la información relevante proporcionada. "
+            #         "Proporciona respuestas claras y útiles basadas en el contexto."
+            #     )
+            # },
+            # {
+            #     "role": "system",
+            #     "content": f"Documentos relevantes:\n{context_docs}"
+            # }
+        ]
 
-📝 **Relevant Documents**:
-{context}
+        # Include previous chat history if available (in Spanish)
+        if history:
+            history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
+            messages.append({
+                "role": "system",
+                "content": f"Historial de chat:\n{history_text}"
+            })
 
-💬 **Chat History**:
-{history}
+        # Add the user's new question
+        messages.append({"role": "user", "content": query})
 
-🔹 **New Question**:
-User: {query}
-Assistant:"""
+        # 🔥 Call OpenAI's ChatCompletion API
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0.7,  # Adjust temperature as needed
+            )
+            response_text = response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Error generating response: {e}")
+            return Response({"error": "Error generating response"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        response_text = llm(prompt)
-
-        # Save the conversation to the database.
+        # Save the conversation to the database
         ChatMessage.objects.create(session=session, role="user", content=query)
         ChatMessage.objects.create(session=session, role="assistant", content=response_text)
 
