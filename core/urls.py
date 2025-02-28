@@ -24,12 +24,12 @@ from drf_yasg import openapi
 # Configuración del esquema de Swagger
 schema_view = get_schema_view(
     openapi.Info(
-        title="API de mi Proyecto",
+        title="API ChatGPT Gato Enigmatico",
         default_version="v1",
-        description="Documentación de la API con Swagger",
-        terms_of_service="https://www.tusitio.com/terms/",
-        contact=openapi.Contact(email="soporte@tusitio.com"),
-        license=openapi.License(name="Licencia BSD"),
+        description="Documentación de la API Gato Encerrado",
+        terms_of_service="",
+        # contact=openapi.Contact(email="soporte@tusitio.com"),
+        # license=openapi.License(name="Licencia BSD"),
     ),
     public=True,
     permission_classes=(permissions.AllowAny,),
@@ -37,12 +37,13 @@ schema_view = get_schema_view(
 
 
 urlpatterns = [
+    path('', include('rag_app.urls')),
+
     # Documentación Swagger en la ruta principal "/"
-    path("", schema_view.with_ui("swagger", cache_timeout=0), name="schema-swagger-ui"),
+    path("swagger", schema_view.with_ui("swagger", cache_timeout=0), name="schema-swagger-ui"),
 
     # También puedes agregar la versión en Redoc (opcional)
     path("redoc/", schema_view.with_ui("redoc", cache_timeout=0), name="schema-redoc"),
-    
-    path('api/', include('rag_app.urls')),
+
     path('admin/', admin.site.urls),
 ]

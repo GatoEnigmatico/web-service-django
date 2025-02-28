@@ -1,15 +1,21 @@
 import os
 import logging
 
-from langchain.llms import OpenAI
+from langchain.chat_models import ChatOpenAI
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-
+from drf_yasg import openapi
 from .models import Document, ChatSession, ChatMessage
 from .serializers import DocumentSerializer
 from .vector_service import search, db
+from django.shortcuts import get_object_or_404
+from django.http import JsonResponse
 
+# Swagger documentation imports
+from drf_yasg.utils import swagger_auto_schema
+
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
 # Configure logger
 logger = logging.getLogger(__name__)
 
@@ -101,77 +107,107 @@ class ChatHistoryView(APIView):
 
 class ChatView(APIView):
     """
-    API endpoint for handling chat interactions.
+    ChatView handles chat requests by retrieving context via a FAISS vector store 
+    and generating responses using LangChain's OpenAI integration. 
+    All prompt-related text (e.g., system instructions) is kept in Spanish, 
+    while code, comments, and documentation are in English.
     """
-    def post(self, request):
-        session_id = request.data.get("session_id")
-        query = request.data.get("query", "")
+    # (If authentication is required, you can uncomment or modify the following lines)
+    # authentication_classes = [JWTAuthentication]
+    # permission_classes = [IsAuthenticated]
 
-        if not query:
-            return Response({"error": "You must provide a question."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Create or retrieve the chat session
-        session, _ = ChatSession.objects.get_or_create(session_id=session_id)
-
-        # Retrieve chat history
-        previous_messages = ChatMessage.objects.filter(session=session).order_by("timestamp")
-        history = [{"role": msg.role, "content": msg.content} for msg in previous_messages]
-
-        # 🔍 Search for relevant documents using FAISS (RAG)
-        retrieved_docs = search(query)
-        if retrieved_docs:
-            context_docs = "\n\n".join([f"- {doc['content']}" for doc in retrieved_docs])
-        else:
-            context_docs = "No relevant documents found."
-
-        # Log retrieved documents for debugging
-        logger.debug(f"Retrieved documents: {context_docs}")
-
-        # Build the messages list for OpenAI's ChatCompletion API.
-        # Note: the prompt sent to ChatGPT remains in Spanish.
-        messages = [
-            # {
-            #     "role": "system",
-            #     "content": (
-            #         "Eres un asistente inteligente que responde preguntas utilizando la información relevante proporcionada. "
-            #         "Proporciona respuestas claras y útiles basadas en el contexto."
-            #     )
-            # },
-            # {
-            #     "role": "system",
-            #     "content": f"Documentos relevantes:\n{context_docs}"
-            # }
-        ]
-
-        # Include previous chat history if available (in Spanish)
-        if history:
-            history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
-            messages.append({
-                "role": "system",
-                "content": f"Historial de chat:\n{history_text}"
-            })
-
-        # Add the user's new question
-        messages.append({"role": "user", "content": query})
-
-        # 🔥 Call OpenAI's ChatCompletion API
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                temperature=0.7,  # Adjust temperature as needed
+    @swagger_auto_schema(
+        operation_summary="Chat with the AI assistant",
+        operation_description=(
+            "This endpoint accepts a user prompt and returns an AI-generated response. "
+            "It utilizes a FAISS vector store to retrieve relevant context for the prompt, "
+            "and uses LangChain with OpenAI to generate the response. "
+            "All prompt-related text (instructions given to the AI) are in Spanish."
+        ),
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'prompt': openapi.Schema(
+                    type=openapi.TYPE_STRING, 
+                    description="The user's prompt or question (in Spanish)."
+                ),
+            },
+            required=['prompt']
+        ),
+        responses={
+            200: openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'response': openapi.Schema(
+                        type=openapi.TYPE_STRING, 
+                        description="The AI's response to the prompt (in Spanish)."
+                    )
+                }
             )
-            response_text = response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"Error generating response: {e}")
-            return Response({"error": "Error generating response"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        }
+    )
+    def post(self, request, format=None):
+        # Get the user prompt from the request data
+        user_prompt = request.data.get('prompt', '')
+        if not user_prompt:
+            # If no prompt is provided, return a bad request response
+            return Response({"error": "No prompt provided."}, status=400)
 
-        # Save the conversation to the database
-        ChatMessage.objects.create(session=session, role="user", content=query)
-        ChatMessage.objects.create(session=session, role="assistant", content=response_text)
+        # Retrieve conversation history from the session (if any)
+        history = request.session.get('history', [])
+        
+        # Use FAISS search to retrieve relevant documents or text snippets for the prompt
+        relevant_docs = search(user_prompt)
+        # Combine the content of relevant documents (if any) into a single context string
+        context_text = ""
+        if relevant_docs:
+            # `relevant_docs` might be a list of strings or LangChain Document objects
+            context_parts = []
+            for doc in relevant_docs:
+                if isinstance(doc, str):
+                    context_parts.append(doc)
+                elif hasattr(doc, 'page_content'):
+                    context_parts.append(doc.page_content)
+                else:
+                    # Fallback: use the string representation of the doc
+                    context_parts.append(str(doc))
+            context_text = "\n".join(context_parts)
 
-        return Response({
-            "session_id": session.session_id,
-            "query": query,
-            "response": response_text
-        })
+        # Define the system instruction prompt in Spanish (prompt-related text)
+        system_instructions = (
+            "La siguiente es una conversación amistosa entre un humano y una IA. "
+            "La IA es útil, habladora y proporciona muchos detalles específicos de su contexto. "
+            "Si la IA no sabe la respuesta a una pregunta, dice honestamente que no la sabe."
+        )
+        # If there is relevant context from FAISS, include it in the system message
+        if context_text:
+            system_message_content = f"{system_instructions}\n\nInformación relevante proporcionada para ayudar a responder:\n{context_text}"
+        else:
+            system_message_content = system_instructions
+
+        # Build the conversation as a list of messages for the chat model
+        messages = [SystemMessage(content=system_message_content)]
+        # Append previous conversation history to messages (if any)
+        for entry in history:
+            role = entry.get("role")
+            content = entry.get("content", "")
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
+        # Append the latest user prompt as the last message
+        messages.append(HumanMessage(content=user_prompt))
+
+        # Initialize the OpenAI chat model via LangChain
+        chat_model = ChatOpenAI(temperature=0.7)
+        # Generate the AI response
+        ai_response = chat_model(messages)
+        answer_text = ai_response.content
+
+        # Update the session history with the new question and answer
+        history.append({"role": "user", "content": user_prompt})
+        history.append({"role": "assistant", "content": answer_text})
+        request.session['history'] = history  # Save updated history in session
+
+        # Return the response as JSON
+        return Response({"response": answer_text})
