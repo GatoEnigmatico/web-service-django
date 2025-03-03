@@ -8,3 +8,4 @@ openai
 faiss-cpu
 chromadb
 tiktoken
+django-cors-headers
