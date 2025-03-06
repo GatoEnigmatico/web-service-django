@@ -68,7 +68,7 @@ class ChatView(APIView):
 
         # Call chat logic with `thread_id`
         ai_response = handle_chat(
-            user_prompt, form_id=1, thread_id=thread_id
+            user_prompt, form_id=thread_id, thread_id=thread_id
         )
 
         # Return the AI's response

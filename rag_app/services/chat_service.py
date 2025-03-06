@@ -239,8 +239,8 @@ def handle_chat(user_prompt: str, form_id: str, thread_id: str):
     app = builder.compile(checkpointer=memory)
     config = {
         "configurable": {
-            "form_id": form_id,
-            "thread_id": 8,
+            "form_id": thread_id,
+            "thread_id": thread_id,
         },
         memory: {},
     }
