@@ -1,131 +1,253 @@
-from typing import Dict, List
+import datetime
+
+from typing_extensions import TypedDict
+from django.conf import settings
+from pathlib import Path
+import json
+from typing import Annotated, Optional, List
 
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import START, END, StateGraph
+from langgraph.prebuilt import ToolNode
+from langgraph.graph import MessagesState, StateGraph, START, END
+from langgraph.graph.message import add_messages
 
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-
-# We do not use ToolNode in this case, as the flow is linear
-
-from .vector_service import faiss_manager
-from .csv_storage import get_stored_answer, store_answer
-
-
-# Helper functions
-def retrieve_context(user_prompt: str) -> str:
-    """Retrieves context using the vector store."""
-    relevant_docs = faiss_manager.search(user_prompt)
-    context_parts = []
-    for doc in relevant_docs:
-        if isinstance(doc, str):
-            context_parts.append(doc)
-        elif isinstance(doc, dict) and "content" in doc:
-            context_parts.append(doc["content"])
-        else:
-            context_parts.append(str(doc))
-    return "\n".join(context_parts)
+from langchain_core.tools import tool
+from langchain_core.messages.utils import trim_messages
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    MessagesPlaceholder,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
 
 
-def build_conversation_history(
-    history: List[dict], user_prompt: str, system_instructions: str
-) -> List:
-    """Assembles the conversation history to send to the model."""
-    messages = [SystemMessage(content=system_instructions)]
-    for entry in history:
-        role = entry.get("role")
-        content = entry.get("content", "")
-        if role == "user":
-            messages.append(HumanMessage(content=content))
-        elif role == "assistant":
-            messages.append(AIMessage(content=content))
-    messages.append(HumanMessage(content=user_prompt))
-    return messages
+from .prompts_service import (
+    PROP_INICIALIZAR_CONVERSACION,
+    PROP_REALIZAR_PREGUNTA,
+    PROP_RESPONDER_AL_USUARIO,
+    build_prompt,
+    build_system_prompt,
+)
+from .questions import QUESTIONS
+
+# Construct the path relative to the Django project
+PROMPTS_PATH = Path(settings.BASE_DIR) / "config" / "prompts.json"
 
 
-def generate_ai_response(messages: List) -> str:
-    """Generates the AI response using ChatOpenAI."""
-    chat_model = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
-    ai_response = chat_model(messages)
-    return ai_response.content
+# Load prompts from the JSON file
+def load_prompts() -> dict:
+    with open(PROMPTS_PATH, "r", encoding="utf-8") as file:
+        return json.load(file)
 
 
-def update_history(
-    history: List[dict], user_prompt: str, ai_response: str
-) -> List[dict]:
-    """Updates the conversation history with the new exchange."""
-    history.append({"role": "user", "content": user_prompt})
-    history.append({"role": "assistant", "content": ai_response})
-    return history
+# Usage
+PROMPTS = load_prompts()
 
 
-# Node functions for StateGraph
-def node_build_history(state: Dict) -> Dict:
-    history = state.get("history", [])
-    user_prompt = state["user_prompt"]
-    system_instructions = state["system_instructions"]
-    messages = build_conversation_history(history, user_prompt, system_instructions)
-    state["messages"] = messages
-    return state
+class Question(TypedDict):
+    key: str
+    question: str
+    answer: Optional[str]  # Respuesta opcional, por defecto None
 
 
-def node_generate_response(state: Dict) -> Dict:
-    messages = state["messages"]
-    ai_response = generate_ai_response(messages)
-    state["ai_response"] = ai_response
-    return state
+class State(MessagesState):
+    messages: Annotated[list, add_messages]
+    questions: List[Question]  # Lista de preguntas con respuestas opcionales
 
 
-def node_update_history(state: Dict) -> Dict:
-    history = state.get("history", [])
-    user_prompt = state["user_prompt"]
-    ai_response = state["ai_response"]
-    updated_history = update_history(history, user_prompt, ai_response)
-    state["updated_history"] = updated_history
-    return state
+# Inicializar MemorySaver
+memory = MemorySaver()
 
 
-# Function to signal the graph to end the flow
-def always_end(state: Dict) -> str:
+@tool
+def search(query: str):
+    """Check if the question anwer a question"""
+    return "Se respondio una pregunta?"
+
+
+tools = [search]
+
+tool_node = ToolNode(tools)
+llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.7)
+
+
+prompt_template = ChatPromptTemplate.from_messages(
+    [
+        SystemMessagePromptTemplate.from_template(build_system_prompt()),
+        MessagesPlaceholder(variable_name="history"),
+        HumanMessagePromptTemplate.from_template("{input}"),
+    ]
+)
+
+analyce_prompt_template = ChatPromptTemplate.from_messages(
+    [
+        SystemMessagePromptTemplate.from_template(
+            "Eres un asistente que revisa respuestas de usuarios a preguntas predefinidas."
+        ),
+        MessagesPlaceholder(variable_name="history"),
+        HumanMessagePromptTemplate.from_template(
+            'La pregunta a evaluar es: "{question}". '
+            "Revisa la conversación y responde con 'sí' si la pregunta ha sido respondida, "
+            "de lo contrario, responde 'no'."
+        ),
+    ]
+)
+
+# trimmer = trim_messages(
+#     max_tokens=45,
+#     strategy="last",
+#     token_counter=llm,
+#     # Usually, we want to keep the SystemMessage
+#     # if it's present in the original history.
+#     # The SystemMessage has special instructions for the model.
+#     include_system=True,
+#     # Most chat models expect that chat history starts with either:
+#     # (1) a HumanMessage or
+#     # (2) a SystemMessage followed by a HumanMessage
+#     # start_on="human" makes sure we produce a valid chat history
+#     start_on="human",
+# )
+
+runnable = llm
+
+# bound_model = runnable.bind_tools(tools)
+
+
+# Función para finalizar el flujo
+def always_end(state: State) -> str:
     return END
 
 
-def handle_chat(user_prompt: str, history: List[dict], thread_id: str, system_instructions: str):
-    """
-    Handles conversation using StateGraph with persistence based on `thread_id`.
-    """
-    # Create the StateGraph and add nodes sequentially
-    workflow = StateGraph(dict)  # Using dict for state
-    workflow.add_node("build_history", node_build_history)
-    workflow.add_node("generate_response", node_generate_response)
-    workflow.add_node("update_history", node_update_history)
+def add_questions_node(state: State) -> State:
+    """Agrega preguntas si aún no están en el estado."""
 
-    # Sequential connections
-    workflow.add_edge(START, "build_history")
-    workflow.add_edge("build_history", "generate_response")
-    workflow.add_edge("generate_response", "update_history")
-    workflow.add_conditional_edges("update_history", always_end)
+    # Solo agregar preguntas si el estado no las tiene aún
+    if "questions" not in state or not state["questions"]:
+        state["questions"] = QUESTIONS
 
-    # Initialize MemorySaver without `configurable`
-    checkpointer = MemorySaver()
+    return state
 
-    # Define the initial state
-    state = {
-        "user_prompt": user_prompt,
-        "history": history,
-        "system_instructions": system_instructions
+
+def get_next_unanswered_question(state: State) -> Question:
+    """Obtiene la siguiente pregunta sin responder, o devuelve None si todas han sido contestadas."""
+    for question in state["questions"]:
+        if question["answer"] is None:
+            return question
+    return None  # No hay preguntas pendientes
+
+
+def agent(state: State) -> State:
+
+    if "questions" not in state or not state["questions"]:
+        state = add_questions_node(state)
+
+    user_prompt = state["messages"][-1].content if state["messages"] else ""
+
+    next_question = get_next_unanswered_question(state)
+
+    if next_question == None:
+        return state
+
+    response = runnable.invoke(
+        prompt_template.invoke(
+            {
+                "history": state["messages"][:-1],
+                "input": build_prompt(
+                    user_prompt=user_prompt,
+                    question=next_question["question"],
+                ),
+            }
+        )
+    )
+
+    state["messages"].append(AIMessage(content=response.content))
+
+    return state
+
+
+def analyze_questions(state: State) -> State:
+    """Analiza si el usuario respondió la pregunta actual y actualiza el state."""
+
+    # Obtener la última respuesta del usuario
+    user_message = state["messages"][-1].content if state["messages"] else ""
+
+    # Obtener la pregunta sin contestar más reciente
+    next_question = get_next_unanswered_question(state)
+
+    if not next_question:
+        return state  # No hay preguntas pendientes, no hacemos nada
+
+    # Construimos el prompt para el modelo de OpenAI
+    prompt = analyce_prompt_template.invoke(
+        {
+            "question": next_question["question"],
+            "history": state["messages"],
+            "input": user_message,
+        }
+    )
+
+    analysis_response = runnable.invoke(prompt)
+    answered_correctly = analysis_response.content.lower().strip() == "sí"
+
+    # Si el modelo dice que la respuesta es válida, asignamos la respuesta al estado
+    if answered_correctly:
+        for question in state["questions"]:
+            if question["key"] == next_question["key"]:
+                question["answer"] = user_message  # Guardamos la respuesta
+                break
+
+    return state  # Devolvemos el estado actualizado
+
+
+# Function to evaluate the first interaction
+def evaluate_interaction(state: State) -> str:
+    if (
+        "questions" not in state
+        or not state["questions"]
+        or len(state["messages"]) == 1
+    ):
+        return "agent"  # First interaction directs to introduction agent
+    return "analyze_questions"  # Otherwise, analyze the user's input
+
+
+# Main function to handle the chat
+def handle_chat(user_prompt: str, form_id: str, thread_id: str):
+
+    # Create the StateGraph and add nodes
+    builder = StateGraph(state_schema=State)
+
+    # Nodes
+    builder.add_node("add_questions", add_questions_node)
+    builder.add_node("agent", agent)
+    builder.add_node("analyze_questions", analyze_questions)
+    builder.add_node("always_end", always_end)
+    # Define the flow
+
+    # Si no están inicializadas, agregar preguntas y luego ir a evaluate_interaction
+    builder.add_conditional_edges(
+        START, evaluate_interaction, ["agent", "analyze_questions"]
+    )
+
+    builder.add_edge("analyze_questions", "agent")
+
+    # The END
+    builder.add_edge("agent", END)
+
+    # Compile and execute the LangGraph workflow
+    app = builder.compile(checkpointer=memory)
+    config = {
+        "configurable": {
+            "form_id": form_id,
+            "thread_id": 8,
+        },
+        memory: {},
     }
 
-    # Compile the LangGraph workflow
-    app = workflow.compile(checkpointer=checkpointer)
+    final_state = app.invoke(
+        {"messages": [{"role": "user", "content": user_prompt}]}, config
+    )
 
-    # Define configuration with `configurable`
-    config = {"configurable": {"thread_id": thread_id}}
-
-    # Invoke the graph with configuration
-    final_state = app.invoke(state, config)
-
-    ai_response = final_state.get("ai_response", "")
-    updated_history = final_state.get("updated_history", history)
-
-    return ai_response, updated_history
+    # Return the final AI response
+    return final_state["messages"][-1].content

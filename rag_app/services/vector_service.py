@@ -1,7 +1,7 @@
 from pathlib import Path
 import threading
 import logging
-from langchain.embeddings import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
 from typing import Any, Dict, List, Optional
 

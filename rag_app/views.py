@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from drf_yasg import openapi
 from .services.chat_service import handle_chat  # Import the chat logic
+from django.shortcuts import render
 
 # Swagger documentation imports
 from drf_yasg.utils import swagger_auto_schema
@@ -15,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 class ChatView(APIView):
     """
-    ChatView handles chat requests by retrieving context via a FAISS vector store 
-    and generating responses using LangChain's OpenAI integration. 
-    All prompt-related text (e.g., system instructions) is kept in Spanish, 
+    ChatView handles chat requests by retrieving context via a FAISS vector store
+    and generating responses using LangChain's OpenAI integration.
+    All prompt-related text (e.g., system instructions) is kept in Spanish,
     while code, comments, and documentation are in English.
     """
+
     # (If authentication is required, you can uncomment or modify the following lines)
     # authentication_classes = [JWTAuthentication]
     # permission_classes = [IsAuthenticated]
@@ -30,45 +32,44 @@ class ChatView(APIView):
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'prompt': openapi.Schema(
-                    type=openapi.TYPE_STRING, 
-                    description="The user's prompt or question (in Spanish)."
+                "prompt": openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="The user's prompt or question (in Spanish).",
                 ),
             },
-            required=['prompt']
+            required=["prompt"],
         ),
         responses={
             200: openapi.Schema(
                 type=openapi.TYPE_OBJECT,
                 properties={
-                    'response': openapi.Schema(
-                        type=openapi.TYPE_STRING, 
-                        description="The AI's response to the prompt (in Spanish)."
+                    "response": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        description="The AI's response to the prompt (in Spanish).",
                     )
-                }
+                },
             )
-        }
+        },
     )
     def post(self, request, format=None):
         # Get the user's message
-        user_prompt = request.data.get('prompt', '')
+        user_prompt = request.data.get("prompt", "")
         if not user_prompt:
-            return Response({"error": "No prompt provided."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Retrieve conversation history
-        history = request.session.get('history', [])
-
+            return Response(
+                {"error": "No prompt provided."}, status=status.HTTP_400_BAD_REQUEST
+            )
+        for key, value in request.session.items():
+            print('{} => {}'.format(key, value))
         # Generate a `thread_id` if it does not exist in the session
-        thread_id = request.session.get('thread_id')
+        thread_id = request.session.get("thread_id")
         if not thread_id:
             thread_id = str(uuid.uuid4())  # Generate a unique UUID
-            request.session['thread_id'] = thread_id  # Store it in the session
+            request.session["thread_id"] = thread_id  # Store it in the session
 
         # Call chat logic with `thread_id`
-        ai_response, updated_history = handle_chat(user_prompt, history, thread_id=thread_id)
-
-        # Update the session history
-        request.session['history'] = updated_history
+        ai_response = handle_chat(
+            user_prompt, form_id=1, thread_id=thread_id
+        )
 
         # Return the AI's response
         return Response({"response": ai_response})

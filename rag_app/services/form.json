@@ -1,0 +1,73 @@
+{
+    "content": [
+        {
+            "type": "page",
+            "value": {
+                "content": [
+                    {
+                        "type": "input",
+                        "value": {
+                            "type": "short-text",
+                            "code": "FOLIO",
+                            "hide_code": true,
+                            "label": "Folio"
+                        }
+                    },
+                    {
+                        "type": "select-gender",
+                        "value": {
+                            "code": "GENERO",
+                            "hide_code": true,
+                            "label": "¿Yo soy?"
+                        }
+                    },
+                    {
+                        "type": "input",
+                        "value": {
+                            "type": "text",
+                            "code": "NOMBRE",
+                            "hide_code": true,
+                            "label": "¿Me llamo?"
+                        }
+                    },
+                    {
+                        "type": "input",
+                        "value": {
+                            "type": "template",
+                            "code": "EDAD",
+                            "hide_code": true,
+                            "template": "Tengo: {0} años"
+                        }
+                    },
+                    {
+                        "type": "input",
+                        "value": {
+                            "type": "text",
+                            "code": "ESCUELA",
+                            "hide_code": true,
+                            "label": "Nombre de escuela"
+                        }
+                    },
+                    {
+                        "type": "input",
+                        "value": {
+                            "type": "template",
+                            "code": "GRADO",
+                            "hide_code": true,
+                            "template": "Grado: {0}"
+                        }
+                    },
+                    {
+                        "type": "input",
+                        "value": {
+                            "type": "template",
+                            "code": "GRUPO",
+                            "hide_code": true,
+                            "template": "Grupo: {0}"
+                        }
+                    }
+                ]
+            }
+        }
+    ]
+}

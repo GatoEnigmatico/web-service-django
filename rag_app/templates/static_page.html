@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat con Asistente IA</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background-color: #f4f7f6;
+        margin: 0;
+        padding: 0;
+      }
+      .chat-container {
+        width: 350px;
+        max-width: 100%;
+        margin: 50px auto;
+        background-color: white;
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 500px;
+      }
+      .chat-box {
+        flex-grow: 1;
+        padding: 20px;
+        overflow-y: auto;
+        background-color: #f9f9f9;
+        display: flex;
+        flex-direction: column;
+      }
+      .message {
+        max-width: 80%;
+        margin-bottom: 10px;
+        padding: 10px;
+        border-radius: 8px;
+        word-wrap: break-word;
+      }
+      .user-message {
+        background-color: #007bff;
+        color: white;
+        align-self: flex-end;
+        margin-left: auto;
+      }
+      .ai-message {
+        background-color: #e1e1e1;
+        color: #333;
+        align-self: flex-start;
+      }
+      .input-container {
+        padding: 10px;
+        background-color: #fff;
+        border-top: 1px solid #ddd;
+        display: flex;
+      }
+      .input-container input {
+        flex-grow: 1;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        font-size: 16px;
+        outline: none;
+      }
+      .input-container button {
+        background-color: #007bff;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 5px;
+        margin-left: 10px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+      .input-container button:hover {
+        background-color: #0056b3;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="chat-container">
+      <!-- Chat box donde se mostrarán los mensajes -->
+      <div class="chat-box" id="chatBox">
+        <!-- Los mensajes se agregarán aquí dinámicamente -->
+      </div>
+
+      <!-- Input para enviar nuevos mensajes -->
+      <div class="input-container">
+        <input
+          type="text"
+          id="inputMessage"
+          placeholder="Escribe tu mensaje..."
+        />
+        <button id="sendMessage">Enviar</button>
+      </div>
+    </div>
+
+    <script>
+      const sendMessageButton = document.getElementById("sendMessage");
+      const inputMessage = document.getElementById("inputMessage");
+      const chatBox = document.getElementById("chatBox");
+
+      sendMessageButton.addEventListener("click", sendMessage);
+
+      // Función para obtener el valor de una cookie
+      function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== "") {
+          const cookies = document.cookie.split(";");
+          for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            // Buscar la cookie que empieza con el nombre deseado
+            if (cookie.startsWith(name + "=")) {
+              cookieValue = decodeURIComponent(
+                cookie.substring(name.length + 1)
+              );
+              break;
+            }
+          }
+        }
+        return cookieValue;
+      }
+
+      function sendMessage() {
+        const messageText = inputMessage.value.trim();
+
+        if (messageText === "") {
+          return;
+        }
+
+        // Mostrar el mensaje del usuario
+        appendMessage(messageText, "user");
+
+        // Limpiar el campo de entrada
+        inputMessage.value = "";
+        inputMessage.disabled = true;
+        sendMessageButton.disabled = true;
+
+        // Enviar el mensaje al servidor
+        fetch("http://localhost:8000/chat/", {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "X-CSRFTOKEN": getCookie("sessionid"),
+            sessionid: getCookie("sessionid"),
+          },
+          body: JSON.stringify({ prompt: messageText }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            // Mostrar la respuesta de la IA
+            appendMessage(data.response, "ai");
+            inputMessage.disabled = false;
+            sendMessageButton.disabled = false;
+            chatBox.scrollTop = chatBox.scrollHeight; // Desplazar hacia el final del chat
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+            appendMessage("Hubo un error al obtener la respuesta.", "ai");
+            inputMessage.disabled = false;
+            sendMessageButton.disabled = false;
+          });
+      }
+
+      function appendMessage(message, sender) {
+        const messageDiv = document.createElement("div");
+        messageDiv.classList.add(
+          "message",
+          sender === "user" ? "user-message" : "ai-message"
+        );
+        messageDiv.textContent = message;
+
+        // Agregar el mensaje al chat box
+        chatBox.appendChild(messageDiv);
+
+        // Desplazar hacia abajo
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      // Opcional: Enviar el mensaje con Enter
+      inputMessage.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          sendMessage();
+        }
+      });
+    </script>
+  </body>
+</html>
