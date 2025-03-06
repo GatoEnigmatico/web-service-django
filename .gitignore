@@ -139,3 +139,6 @@ GitHub.sublime-settings
 
 # Faiss generated indexes or files
 faiss_index/
+
+static/*
+!static/custom_files/
