@@ -13,7 +13,7 @@ router = DefaultRouter()
 
 urlpatterns = [
     # CRUD endpoints for characters (list, create, retrieve, update, delete)
-    path("", include(router.urls)),
+    # path("", include(router.urls)),
     # Custom endpoint to process a prompt based on the character's name and conversation ID.
     # URL: /character/<name>/<conversation_id>/
     path(
@@ -23,8 +23,10 @@ urlpatterns = [
     ),
     # LEGACY endpoint: maintained for backward compatibility
     path("chat/", ChatAPIView.as_view(), name="chat"),
+
     # IAV endpoints: example static page and chat endpoint
-    path("iav/cifava/", CIFAVAChatAPIView.as_view(), name="chat"),
+    path("iav/cifava/chat/", CIFAVAChatAPIView.as_view(), name="chat"),
+
     path(
         "iav/cifava", TemplateView.as_view(template_name="static_page.html"), name="iav"
     ),
