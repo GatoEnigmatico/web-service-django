@@ -81,26 +81,65 @@ prompt_template = ChatPromptTemplate.from_messages(
     ]
 )
 
+analyce_prompt_template = ChatPromptTemplate.from_messages(
+    [
+        SystemMessagePromptTemplate.from_template(
+            "Eres un asistente que revisa respuestas de usuarios a preguntas predefinidas."
+        ),
+        MessagesPlaceholder(variable_name="history"),
+        HumanMessagePromptTemplate.from_template(
+            'La pregunta a evaluar es: "{question}". '
+            "Revisa la conversación y responde con 'sí' si la pregunta ha sido respondida, "
+            "de lo contrario, responde 'no'."
+        ),
+    ]
+)
+
 runnable = llm
+
+# Función para finalizar el flujo
+def always_end(state: State) -> str:
+    return END
+
+
+def add_questions_node(state: State) -> State:
+    """Agrega preguntas si aún no están en el estado."""
+
+    # Solo agregar preguntas si el estado no las tiene aún
+    if "questions" not in state or not state["questions"]:
+        state["questions"] = QUESTIONS
+
+    return state
+
+
+def get_next_unanswered_question(state: State) -> Question:
+    """Obtiene la siguiente pregunta sin responder, o devuelve None si todas han sido contestadas."""
+    for question in state["questions"]:
+        if question["answer"] is None:
+            return question
+    return None  # No hay preguntas pendientes
 
 
 def agent(state: State) -> State:
 
+    if "questions" not in state or not state["questions"]:
+        state = add_questions_node(state)
+
     user_prompt = state["messages"][-1].content if state["messages"] else ""
 
-    prompt_template = ChatPromptTemplate.from_messages(
-        [
-            SystemMessagePromptTemplate.from_template(build_system_prompt()),
-            MessagesPlaceholder(variable_name="history"),
-            HumanMessagePromptTemplate.from_template(user_prompt),
-        ]
-    )
+    next_question = get_next_unanswered_question(state)
+
+    if next_question == None:
+        return state
 
     response = runnable.invoke(
         prompt_template.invoke(
             {
                 "history": state["messages"][:-1],
-                "input": build_prompt(user_prompt),
+                "input": build_prompt(
+                    user_prompt=user_prompt,
+                    question=next_question["question"],
+                ),
             }
         )
     )
@@ -108,6 +147,40 @@ def agent(state: State) -> State:
     state["messages"].append(AIMessage(content=response.content))
 
     return state
+
+
+def analyze_questions(state: State) -> State:
+    """Analiza si el usuario respondió la pregunta actual y actualiza el state."""
+
+    # Obtener la última respuesta del usuario
+    user_message = state["messages"][-1].content if state["messages"] else ""
+
+    # Obtener la pregunta sin contestar más reciente
+    next_question = get_next_unanswered_question(state)
+
+    if not next_question:
+        return state  # No hay preguntas pendientes, no hacemos nada
+
+    # Construimos el prompt para el modelo de OpenAI
+    prompt = analyce_prompt_template.invoke(
+        {
+            "question": next_question["question"],
+            "history": state["messages"],
+            "input": user_message,
+        }
+    )
+
+    analysis_response = runnable.invoke(prompt)
+    answered_correctly = analysis_response.content.lower().strip() == "sí"
+
+    # Si el modelo dice que la respuesta es válida, asignamos la respuesta al estado
+    if answered_correctly:
+        for question in state["questions"]:
+            if question["key"] == next_question["key"]:
+                question["answer"] = user_message  # Guardamos la respuesta
+                break
+
+    return state  # Devolvemos el estado actualizado
 
 
 # Function to evaluate the first interaction
@@ -122,17 +195,22 @@ def evaluate_interaction(state: State) -> str:
 
 
 # Main function to handle the chat
-def handle_chat(user_prompt: str, form_id: str, thread_id: str):
+def handle_cifava_chat(user_prompt: str, form_id: str, thread_id: str):
 
     # Create the StateGraph and add nodes
     builder = StateGraph(state_schema=State)
 
     # Nodes
+    builder.add_node("add_questions", add_questions_node)
     builder.add_node("agent", agent)
+    builder.add_node("analyze_questions", analyze_questions)
+    builder.add_node("always_end", always_end)
     # Define the flow
 
     # Si no están inicializadas, agregar preguntas y luego ir a evaluate_interaction
-    builder.add_edge(START, "agent")
+    builder.add_conditional_edges(
+        START, evaluate_interaction, ["agent", "analyze_questions"]
+    )
 
     builder.add_edge("analyze_questions", "agent")
 
